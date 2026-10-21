@@ -64,6 +64,11 @@ Configure the required environment variables, database connection, client data p
 
 > **Note:** Exact startup commands and configuration requirements depend on the current project structure and deployment setup.
 
+You need to set the realmlist to 127.0.0.1
+```bash
+set realmlist 127.0.0.1
+```
+
 Use the slicer app to slice up to 64Kb chunks the game (enUS version) in the web/game folder, it will slice into the web/blocks folder
 
 ```bash
@@ -71,6 +76,9 @@ python3 web/slicer.py
 ```
 
 After you succesfully sliced up the app, you can run the npm bridge (it redirects the server to the real server)
+
+
+
 
 ## Examples
 
