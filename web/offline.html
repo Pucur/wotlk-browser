@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WoW Browser</title>
+<meta name="theme-color" content="#d9a826">
+<!-- Shown by sw.js when the realm can't be reached (no signal, or the server is down), in the rotate card's style. -->
+<style>
+    @font-face { font-family: "Friz Quadrata"; src: url("loading-font.ttf"); }
+    html, body { height: 100%; margin: 0; background: #000; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px;
+           box-sizing: border-box; text-align: center; color: #ffd200; font: 20px/1.3 "Friz Quadrata", Georgia, serif;
+           text-shadow: 1px 1px 0 #000; }
+    small { color: rgba(200, 200, 200, .84); font-size: 14px; }
+    button { margin-top: 12px; padding: 8px 28px; font: inherit; font-size: 16px; color: #ffd200; cursor: pointer;
+             background: linear-gradient(#6b0d0d, #3a0505); border: 1px solid #b8860b; border-radius: 4px; }
+</style>
+</head>
+<body>
+<small>Check your connection. If it's fine, the realm may be restarting.</small>
+<button onclick="location.reload()">Try again</button>
+<script>
+    // Back online: straight in.
+    addEventListener("online", () => location.reload());
+</script>
+</body>
+</html>

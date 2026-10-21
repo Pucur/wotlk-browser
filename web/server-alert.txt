@@ -1,0 +1,10 @@
+SERVERALERT:
+<html><body>
+<h1>Welcome to WoW</h1>
+<br/>
+<p>A Wrath of the Lich King realm that runs right in your browser.</p>
+<br/>
+<h2>Getting started</h2>
+<p>New here? Click Create Account, then log in with the name and password you picked.</p>
+<p>Press Alt+Enter (or the Fullscreen button) to play fullscreen.</p>
+</body></html>

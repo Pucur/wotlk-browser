@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- The phone keyboard overlays the canvas rather than resizing it, which would lay the UI out again (OsIME.cpp). -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=overlays-content">
+<title>WoW Client</title>
+<meta name="description" content="WoW Client is a Wrath of the Lich King (3.3.5) realm you play right in your browser. No download, no launcher: create an account on the login screen and play.">
+<link rel="canonical" href="http://192.168.50.46/">
+<!-- make-logo.py writes the realm's icon as favicon.svg on the server, which the bridge serves before this directory's. -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#d9a826">
+<!-- Website analytics (Umami, cookieless; Deploy/Caddyfile serves it under /u/). -->
+<script defer src="/u/lh.js?v=3.4.0" data-website-id="e99c4cd0-ef1b-48c5-ab6e-cd96fcd1ea8c" data-host-url="/u" data-domains="WoW Client.com"></script>
+<!-- Added to the home screen, it opens full screen, with none of Safari's bars (docs/mobile-plan.md). -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="WoW Client">
+<!-- Installing it (Android, desktop Chrome): full screen, landscape. The icons are made on the server by make-logo.py. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<!-- Link previews (Discord, social sites). og-image.jpg is made on the server by make-logo.py. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WoW Client">
+<meta property="og:url" content="https://WoW Client.com/play">
+<meta property="og:title" content="WoW Client: Wrath of the Lich King in your browser">
+<meta property="og:description" content="A Wrath of the Lich King (3.3.5) realm you play right in your browser. No download, no launcher.">
+<meta property="og:image" content="https://WoW Client.com/og-image.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="WoW Client, a Wrath of the Lich King realm you play in your browser">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="WoW Client: Wrath of the Lich King in your browser">
+<meta name="twitter:description" content="A Wrath of the Lich King (3.3.5) realm you play right in your browser. No download, no launcher.">
+<meta name="twitter:image" content="https://WoW Client.com/og-image.jpg">
+<style>
+    html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 12px/1.4 monospace; overflow: hidden; }
+    /* dvh: on iOS 100vh runs on under Safari's toolbars, which then hide the bottom of the game. */
+    #canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; outline: none; }
+    /* Touches go to the game (Input.cpp), not to scrolling, zooming or the long-press callout. */
+    #canvas { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+    /* The touch HUD (WebTouch.cpp) reads the safe-area insets (the notch) from this element's padding. */
+    #safe { position: fixed; inset: 0; visibility: hidden; pointer-events: none; padding: env(safe-area-inset-top)
+            env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    #log { position: fixed; left: 0; right: 0; bottom: 0; max-height: 35vh; overflow: auto; margin: 0; padding: 6px 8px;
+           background: rgba(0, 0, 0, .75); white-space: pre-wrap; pointer-events: none; z-index: 2; }
+    #log.hidden { display: none; }
+    #stats { position: fixed; left: 4px; top: 4px; z-index: 3; padding: 2px 6px; background: rgba(0, 0, 0, .6);
+             color: #0f0; pointer-events: none; }
+
+    /* The client's own loading screen (LoadingScreen.cpp): a painting letterboxed to 4:3 or 16:10, the bar border
+       0.6 x 0.05 of it centred 0.075 up from the bottom, the fill 0.525 x 0.025 growing from the left. The textures
+       are extracted from the game data on the server (extract-art.mjs). */
+    #loading { position: fixed; inset: 0; z-index: 1; background: #000; display: flex; align-items: center;
+               justify-content: center; transition: opacity .25s; }
+    #loading.done { opacity: 0; pointer-events: none; }
+    #screen { position: relative; width: min(100vw, calc(100vh * var(--ratio, 1.6)));
+              aspect-ratio: var(--ratio, 1.6); background: center / 100% 100% no-repeat; }
+    #fill, #border { position: absolute; background: left / 100% 100% no-repeat; }
+    #fill { left: 23.75%; bottom: 6.25%; width: 0; height: 2.5%; background-image: url("loading-bar-fill.png"); }
+    #border { left: 20%; bottom: 5%; width: 60%; height: 5%; background-image: url("loading-bar-border.png"); }
+    #status { position: absolute; left: 0; right: 0; bottom: 12%; text-align: center; color: #ffd200;
+              font: 15px Georgia, serif; text-shadow: 1px 1px 0 #000; }
+    /* The client's tip (LoadingScreenEnable): Friz Quadrata at 0.018 of the screen height, light grey, a one-pixel
+       shadow, left-aligned in a centred box 515/768 of the height wide, its bottom resting on the bar. */
+    @font-face { font-family: "Friz Quadrata"; src: url("loading-font.ttf"); }
+    #screen { container-type: size; }
+    #tip { position: absolute; left: 50%; bottom: 10%; width: 67.06cqh; transform: translateX(-50%);
+           color: rgba(200, 200, 200, .84); font: max(1.8cqh, 11px)/1.28 "Friz Quadrata", Georgia, serif;
+           text-shadow: .1cqh .1cqh 0 #000; transition: opacity .4s; }
+    #tip.out { opacity: 0; }
+    #tip a { color: #ffd200; }
+    #status a { display: inline-block; margin: 10px 10px 0; color: #ffd200; cursor: pointer; }
+
+    /* Shown while game data downloads after the login screen; in the client's gold with its text shadow. */
+    #activity { position: fixed; left: 0; right: 0; bottom: 20%; z-index: 1; text-align: center; pointer-events: none;
+                color: #ffd200; font: 16px Georgia, serif; text-shadow: 1px 1px 0 #000, 0 0 6px #000;
+                opacity: 0; transition: opacity .3s; }
+    #activity.on { opacity: 1; }
+    #activity span::after { content: ""; animation: dots 1.2s steps(4) infinite; }
+    @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+
+    /* The phone keyboard's text field (OsIME.cpp), shown just above the keyboard (or at the top, where the keyboard
+       can't be measured) like the chat edit box: a dark translucent backdrop with a thin gold border. Hidden, it stays
+       in the viewport so focusing it never scrolls. 16px, or iOS zooms in on focus. */
+    #wow-text { position: fixed; left: 50%; z-index: 2; transform: translateX(-50%); box-sizing: border-box;
+                background: rgba(0, 0, 0, .75); border: 1px solid rgba(255, 210, 0, .55); border-radius: 3px;
+                font: 16px Georgia, serif; text-shadow: 1px 1px 0 #000;
+                top: max(8px, env(safe-area-inset-top)); width: min(600px, calc(100vw - 32px)); padding: 6px 10px;
+                color: #fff; caret-color: #ffd200;
+                outline: none; opacity: 0; pointer-events: none; }
+    #wow-text.on { opacity: 1; pointer-events: auto; }
+
+    /* A phone or tablet held upright: the game is laid out for landscape. Android locks it once full screen; iOS can't,
+       so this asks. The game keeps loading underneath. In the client's gold, with the tip's grey below. */
+    #rotate { display: none; }
+    @media (pointer: coarse) and (orientation: portrait) {
+        #rotate { position: fixed; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: center;
+                  justify-content: center; gap: 8px; padding: 24px; background: #000; text-align: center;
+                  color: #ffd200; font: 20px/1.3 "Friz Quadrata", Georgia, serif; text-shadow: 1px 1px 0 #000; }
+        #rotate small { color: rgba(200, 200, 200, .84); font-size: 14px; }
+    }
+
+    /* Without extracted art (a local bridge): the same bar, drawn plainly. */
+    #loading.plain #border { border: 1px solid #555; box-sizing: border-box; background: none; }
+    #loading.plain #fill { background: #2d6f8f; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<div id="loading">
+    <div id="screen"><div id="fill"></div><div id="border"></div><div id="status"></div><div id="tip"></div></div>
+</div>
+<div id="activity">Downloading game data<span></span></div>
+<pre id="log" class="hidden"></pre>
+<div id="stats" hidden></div>
+<div id="safe"></div>
+<div id="rotate">Turn your device sideways<small>WoW Client is played in landscape.</small></div>
+<script>
+    const log = document.getElementById("log");
+    const append = (text) => {
+        log.textContent += text + "\n";
+        log.scrollTop = log.scrollHeight;
+        console.log(text);
+    };
+    // The log starts hidden; F10 toggles it.
+    addEventListener("keydown", (e) => { if (e.key === "F10") { log.classList.toggle("hidden"); e.preventDefault(); } });
+
+    // Alt+Enter and the login screen's Fullscreen button (Input.cpp, WebAccount.cpp). In fullscreen, Esc goes to the game
+    // (Keyboard Lock, where supported) so it still closes menus; holding it leaves fullscreen.
+    window.wowToggleFullscreen = () => {
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+            return;
+        }
+        document.documentElement.requestFullscreen({ navigationUI: "hide" })
+            .then(() => navigator.keyboard?.lock?.(["Escape"]))
+            .catch(() => {});
+    };
+
+    const loading = document.getElementById("loading");
+    const screen = document.getElementById("screen");
+    const fill = document.getElementById("fill");
+    const status = document.getElementById("status");
+
+    // Community tips above the bar, a new one every 8 s, Discord first. The game shows its own gameplay tips in the world.
+    const discord = '<a href="https://discord.gg/lolihatediscord" target="_blank" rel="noopener">Discord</a>';
+    const tips = [
+        `Join the WoW Client community on ${discord}.`,
+        `Found a bug? Report it on ${discord} and we'll fix it.`,
+        `Got an idea for the realm? Share it with us on ${discord}.`,
+        `Looking for a group? Ask on ${discord}, someone's usually around.`,
+        "Bring a friend: send them here. There's nothing to install.",
+        "Pick up curated addons from the AddOn Library at character select.",
+    ];
+    const tip = document.getElementById("tip");
+    let tipAt = 0;
+    tip.innerHTML = tips[tipAt++];
+    const tipTimer = setInterval(() => {
+        tip.classList.add("out");
+        setTimeout(() => { tip.innerHTML = tips[tipAt++ % tips.length]; tip.classList.remove("out"); }, 400);
+    }, 8000);
+
+    // A random painting, as the client picks one per zone.
+    fetch("loading-art.json").then((r) => (r.ok ? r.json() : Promise.reject())).then(({ screens }) => {
+        const pick = screens[Math.floor(Math.random() * screens.length)];
+        screen.style.setProperty("--ratio", pick.wide ? 1.6 : 4 / 3);
+        screen.style.backgroundImage = `url("${pick.file}")`;
+    }).catch(() => loading.classList.add("plain"));
+
+    // The client reads game data one 64 KB block at a time with synchronous requests (WebVfs.cpp), a round trip each on
+    // a first visit. Fetching the blocks it reads on its way to the login screen (login-blocks.txt) a few at a time
+    // while Wow.wasm downloads puts them in the browser cache before it asks. Same URLs as WebVfsFetchBlock, so the
+    // cache entries match. More at once only slows Wow.wasm: a first visit is bandwidth-bound by then. A stale list
+    // costs bandwidth, not correctness. To re-record it, empty it, load the page in a fresh browser profile against
+    // `bridge.mjs --trace > trace.log` (with the deployment's WTF/Config.wtf: without SET movie "0" the intro cinematic
+    // is read too), then: grep -o '^GET /blocks/Data/[^ ]*' trace.log | cut -c13- | awk '!seen[$0]++'
+    // world-blocks.txt follows, fetched while the player sits on the login screen: the blocks entering the world reads
+    // in any starting zone (interface textures, UI sounds, generic world art; recorded as a dwarf in Coldridge and an
+    // orc in Durotar, kept where both read them; the 64 KB list is a third trace's blocks within those). Without them
+    // the first open of the character pane, spellbook or world map froze the game for 0.2-0.8 s while the disk queue
+    // fetched its textures one block at a time. To re-record it, empty both lists, record as above for two characters
+    // of different starting zones (log in, enter the world, open the common windows), and keep the blocks both traces
+    // share that login-blocks.txt lacks.
+    Promise.all(["login-blocks.txt", "world-blocks.txt"].map((f) => fetch(f).then((r) => (r.ok ? r.text() : "")).catch(() => ""))).then((texts) => {
+        const urls = texts.join("\n").split("\n").filter(Boolean).map((p) => "/blocks/" + p.split("/").map(encodeURIComponent).join("/"));
+        const next = async () => {
+            for (let url; (url = urls.shift()); ) await fetch(url).then((r) => r.arrayBuffer()).catch(() => {});
+        };
+        for (let i = 0; i < 6; i++) next();
+    });
+
+    // Progress: the download is the first 70%; startup creeps on until the client reports the login screen is up.
+    let progress = 0;
+    const setProgress = (p) => { progress = Math.max(progress, Math.min(p, 1)); fill.style.width = `${progress * 52.5}%`; };
+    let creep;
+
+    // Anonymous usage counts for the admin page (admin.mjs): the event, a browser family or failure reason, and the load
+    // time. Nothing identifying is sent.
+    // The same events, but the page view itself, go to Umami as well.
+    const report = (event, detail = "", ms = 0) => {
+        if (event !== "visit") window.umami?.track(event, { detail, seconds: Math.round(ms / 1000) });
+        return fetch("/stats/event", {
+            method: "POST", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event, detail, ms }),
+        }).catch(() => {});
+    };
+    const ua = navigator.userAgent;
+    report("visit", /Edg\//.test(ua) ? "edge" : /Firefox\//.test(ua) ? "firefox" : /Chrome\//.test(ua) ? "chrome" : /Safari\//.test(ua) ? "safari" : "other");
+
+    let failed = false;
+    const fail = (text, reason = "other") => {
+        clearInterval(creep);
+        clearInterval(tipTimer);
+        tip.hidden = true;
+        status.textContent = text;
+        if (!failed) report("load_failed", reason);
+        failed = true;
+    };
+    if (!document.createElement("canvas").getContext("webgl2")) {
+        fail("Your browser can't run the game (it needs WebGL 2). Try a recent Chrome, Edge or Firefox on a computer.", "webgl2");
+    }
+
+    // The client reports when its glue frames are loaded and hands over window.wowFetchCount(), the kilobytes of game
+    // data it has fetched (WebAccount.cpp). The login scene still streams in after that, so the loading screen stays
+    // up until the count has not moved for 1.5 s; the cap keeps a slow connection from showing it forever. After that,
+    // a download that runs for more than a moment (entering the world, a new zone) gets the activity line, because the
+    // game itself stops drawing while it waits for data.
+    const activity = document.getElementById("activity");
+    let loaded = false;
+    const finishLoading = (capped) => {
+        if (loaded || failed) return;
+        loaded = true;
+        clearInterval(creep);
+        clearInterval(tipTimer);
+        setProgress(1);
+        setTimeout(() => loading.classList.add("done"), 200);
+        report(capped ? "load_slow" : "loaded", "", performance.now());
+    };
+    setTimeout(() => finishLoading(true), 180_000);
+    // Leaving before the login screen is up: how long they waited, and whether Wow.wasm was still downloading.
+    let left = false;
+    addEventListener("pagehide", () => {
+        if (loaded || failed || left) return;
+        left = true;
+        report("load_abandoned", creep ? "startup" : "download", performance.now());
+    });
+    window.wowFramesLoaded = () => {
+        let last = window.wowFetchCount(), changedAt = performance.now(), burstFrom = null;
+        setInterval(() => {
+            const count = window.wowFetchCount(), now = performance.now();
+            if (count !== last) {
+                if (burstFrom === null) burstFrom = { at: now, count: last };
+                last = count;
+                changedAt = now;
+                if (!loaded) setProgress(progress + (0.99 - progress) * 0.03);
+            } else if (now - changedAt >= 1500) {
+                burstFrom = null;
+                finishLoading(false);
+            }
+            const showing = loaded && burstFrom !== null && now - burstFrom.at >= 700;
+            activity.classList.toggle("on", showing);
+            if (showing) activity.firstChild.textContent = `Downloading game data (${Math.round((count - burstFrom.count) / 1024)} MB)`;
+        }, 250);
+    };
+
+    // The game's threads need a cross-origin isolated page, which the built-in browsers of apps (Reddit, Instagram,
+    // TikTok, Facebook, Android WebViews) don't give. Those players are sent to their real browser, with the link.
+    if (!crossOriginIsolated) {
+        const inApp = /FBAN|FBAV|Instagram|Line\/|Discord|Reddit|musical_ly|TikTok|Snapchat|; wv\)/i.test(ua);
+        fail(inApp ? "This app's built-in browser can't run the game. Open to the proper in Safari or Chrome."
+            : "This browser can't run the game. Open it in a recent Chrome, Edge, Firefox or Safari.", inApp ? "inapp" : "isolation");
+        const url = `${location.origin}/play`, br = document.createElement("br"), copy = document.createElement("a");
+        copy.textContent = "Copy link";
+        copy.onclick = () => navigator.clipboard.writeText(url).then(() => { copy.textContent = "Link copied"; }, () => { copy.textContent = url; });
+        status.append(br, copy);
+        // Android can hand the page straight to Chrome.
+        if (/Android/.test(ua)) {
+            const chrome = document.createElement("a");
+            chrome.textContent = "Open in Chrome";
+            chrome.href = `intent://${location.host}/play#Intent;scheme=https;package=com.android.chrome;end`;
+            status.append(chrome);
+        }
+    }
+
+    // Phones (docs/mobile-plan.md, T0) get a lower memory ceiling (pre.js), a smaller game-data block cache (WebVfs.cpp)
+    // and a drawing buffer of at most 1.5 pixels per CSS pixel (OsWebPixelRatio). For testing on a phone, ?mem=<MB>,
+    // ?cache=<MB> and ?scale=<factor of devicePixelRatio> override them, and ?stats shows the frame rate and the heap,
+    // which never shrinks, so it is also the peak.
+    const params = new URLSearchParams(location.search);
+    const mobile = matchMedia("(pointer: coarse)").matches && navigator.maxTouchPoints > 0;
+    window.wowMemoryMB = Number(params.get("mem")) || (mobile ? 2048 : 0);
+    window.wowCacheBlocks = Number(params.get("cache")) || (mobile ? 64 : 256);
+    window.wowRenderScale = Number(params.get("scale")) || (mobile ? Math.min(1, 1.5 / devicePixelRatio) : 1);
+    // The webTouch CVar's default (WebTouch.cpp): the touch HUD on a touch screen; ?touch=1 or 0 overrides it.
+    window.wowTouch = params.has("touch") ? params.get("touch") === "1" : mobile;
+    // Android's back button is Escape (OsIME.cpp), so it closes menus and cancels casts instead of leaving the page.
+    if (mobile) {
+        history.pushState(null, "", location.href);
+        addEventListener("popstate", () => {
+            if (window.wowKey) window.wowKey(27);
+            history.pushState(null, "", location.href);
+        });
+    }
+    // Android: a tap goes full screen and turns the game to landscape, the first one after loading and again after coming
+    // back from another app (Chrome leaves full screen then). Both need a tap. Opened from the home screen it already is
+    // (manifest.webmanifest); iOS gives pages neither, its home-screen app is full screen by itself.
+    let fullscreenOnTap = mobile && !!document.documentElement.requestFullscreen;
+    addEventListener("pointerup", () => {
+        if (!fullscreenOnTap) return;
+        fullscreenOnTap = false;
+        if (document.fullscreenElement || matchMedia("(display-mode: fullscreen)").matches) return;
+        document.documentElement.requestFullscreen({ navigationUI: "hide" })
+            .then(() => window.screen.orientation?.lock?.("landscape")).catch(() => {});
+    }, true);
+    // Back from another app: iOS suspends a hidden page, and the world connection may have died meanwhile. The client
+    // reconnects if it has to (WebResume.cpp).
+    const visibility = () => {
+        const visible = document.visibilityState === "visible";
+        window.wowVisible?.(visible);
+        if (visible && mobile && document.documentElement.requestFullscreen) fullscreenOnTap = true;
+    };
+    document.addEventListener("visibilitychange", visibility);
+    // Opened with no connection or with the realm down (an installed app most of all), a page of our own instead of
+    // the browser's error page (sw.js).
+    navigator.serviceWorker?.register("/sw.js").catch(() => {});
+    addEventListener("pageshow", visibility);
+    if (params.has("stats")) {
+        const stats = document.getElementById("stats");
+        stats.hidden = false;
+        let frames = 0;
+        setInterval(() => {
+            const count = window.wowFrameCount ? window.wowFrameCount() : 0;
+            const heap = window.wasmMemory ? Math.round(wasmMemory.buffer.byteLength / 1048576) : 0;
+            // The canvas belongs to the game thread (OffscreenCanvas), so its buffer size is worked out as OsWebPixelRatio does.
+            const rect = document.getElementById("canvas").getBoundingClientRect(), ratio = devicePixelRatio * wowRenderScale;
+            stats.textContent = `${count - frames} fps · heap ${heap} MB · ${Math.round(rect.width * ratio)}x${Math.round(rect.height * ratio)}` + (mobile ? " · mobile" : "");
+            frames = count;
+        }, 1000);
+    }
+
+    // World sessions for the admin page (admin.mjs): how long this page was connected to the realm (character select and
+    // the world), on what kind of device, and the frame rate meanwhile. The client opens its sockets on this thread, so the
+    // realm connection (port 8085) shows up here. Reported every minute and when the page is hidden, under a random id per page, so a later report
+    // replaces an earlier one and a session that ends in a crash is still counted.
+    const sessionId = [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const device = !mobile ? "desktop" : Math.min(screen.width, screen.height) >= 600 ? "tablet" : "phone";
+    let worldSockets = 0, worldSince = 0, worldMs = 0, fpsFrames = 0, fpsMs = 0;
+    const NativeWebSocket = window.WebSocket;
+    window.WebSocket = class extends NativeWebSocket {
+        constructor(...args) {
+            super(...args);
+            if (!/\/tcp\/[\d.]+\/\d+$/.test(String(args[0]))) return;
+            let open = false;
+            this.addEventListener("open", () => { open = true; if (worldSockets++ === 0) worldSince = performance.now(); });
+            this.addEventListener("close", () => { if (open && --worldSockets === 0) worldMs += performance.now() - worldSince; });
+        }
+    };
+    const worldSeconds = () => Math.round((worldMs + (worldSockets ? performance.now() - worldSince : 0)) / 1000);
+    const reportSession = () => {
+        const seconds = worldSeconds();
+        if (!seconds) return;
+        fetch("/stats/session", {
+            method: "POST", keepalive: true, headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: sessionId, device, seconds, fps: fpsMs ? Math.round(fpsFrames / (fpsMs / 1000)) : 0 }),
+        }).catch(() => {});
+    };
+    let lastFrames = 0, lastAt = 0;
+    setInterval(() => {
+        const frames = window.wowFrameCount ? window.wowFrameCount() : 0, now = performance.now();
+        if (worldSockets && lastAt && document.visibilityState === "visible") {
+            fpsFrames += frames - lastFrames;
+            fpsMs += now - lastAt;
+        }
+        lastFrames = frames;
+        lastAt = now;
+    }, 5000);
+    setInterval(() => { if (worldSockets) reportSession(); }, 60_000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") reportSession(); });
+    addEventListener("pagehide", reportSession);
+
+    var Module = {
+        canvas: document.getElementById("canvas"),
+        print: append,
+        printErr: append,
+
+        // Downloads Wow.wasm with progress (the browser keeps it, so later visits only check it is current).
+        instantiateWasm(info, receive) {
+            (async () => {
+                const response = await fetch("Wow.wasm");
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                // The CDN compresses it, so the bridge also sends the real size.
+                const total = Number(response.headers.get("x-file-size") ?? 0)
+                    || (response.headers.get("content-encoding") ? 0 : Number(response.headers.get("content-length") ?? 0));
+                const reader = response.body.getReader();
+                const chunks = [];
+                let received = 0;
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    received += value.length;
+                    if (total) setProgress((received / total) * 0.7);
+                }
+                const bytes = new Uint8Array(received);
+                let at = 0;
+                for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.length; }
+
+                setProgress(0.7);
+                creep = setInterval(() => setProgress(progress + (0.97 - progress) * 0.015), 100);
+                const { instance, module } = await WebAssembly.instantiate(bytes, info);
+                receive(instance, module);
+            })().catch((e) => fail(`Could not load the game (${e.message}). Reload the page to try again.`, "download"));
+            return {};
+        },
+    };
+    window.addEventListener("error", (e) => { if (!loading.classList.contains("done")) fail(e.message); });
+</script>
+
+<script>
+  const WOW_CHUNK = 16;               // hány 64 KB-os blokk egy kérésben
+  const wowCache = new Map();         // urlPath -> ArrayBuffer
+  const wowPending = new Map();       // urlPath -> ArrayBuffer | null (ha még nincs)
+
+  function wowFetchRange(urlPath, from, to) {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", urlPath, false);   // szinkron, a wasm miatt
+    xhr.responseType = "arraybuffer";
+    xhr.setRequestHeader("Range", "bytes=" + from + "-" + to);
+    xhr.send();
+    return (xhr.status === 206 || xhr.status === 200) ? xhr.response : null;
+  }
+
+  window.__wowPatchVfs = function () {
+    // A Wow.js által már beállított WebVfsFetchBlock-ot nem használjuk tovább.
+    globalThis.WebVfsFetchBlock = function (path, size, index, blockKB, count, dst) {
+      const rawPath = UTF8ToString(path);
+      const formattedPath = rawPath.split("/").map(encodeURIComponent).join("/");
+      const blockBytes = count;                     // a játék által kért blokk mérete
+      const base = "blocks/" + formattedPath + "/";
+      const name = (i) => base + size + "-" + i + "-" + blockKB + "k.bin";
+      const url = name(index);
+
+      let buf = wowCache.get(url);
+      if (!buf) {
+        // Csoport: a blokk körüli, igazított, WOW_CHUNK-os ablak.
+        const first = index - (index % WOW_CHUNK);
+        const full = wowFetchRange("/game/" + formattedPath,
+                                   first * blockBytes,
+                                   (first + WOW_CHUNK) * blockBytes - 1);
+        if (!full) return -1;
+        const bytes = new Uint8Array(full);
+        for (let k = 0; k < WOW_CHUNK; k++) {
+          const part = bytes.subarray(k * blockBytes, (k + 1) * blockBytes);
+          if (part.byteLength === 0) break;
+          wowCache.set(name(first + k), part.slice().buffer);
+        }
+        buf = wowCache.get(url);
+        if (!buf) return -1;
+      }
+      if (buf.byteLength !== count) return -1;
+      (growMemViews(), HEAPU8).set(new Uint8Array(buf), dst >>> 0);
+      return count;
+    };
+  };
+</script>
+
+<script src="Wow.js?v=6x42-mvffpokt"></script>
+<script>window.__wowPatchVfs && window.__wowPatchVfs();</script>
+</body>
+</html>

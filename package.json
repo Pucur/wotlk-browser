@@ -1,0 +1,18 @@
+{
+  "name": "WoW-browser",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node bridge.mjs",
+    "trace": "node bridge.mjs --trace > trace.log",
+    "admin": "node admin.mjs",
+    "art": "node extract-art.mjs"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0",
+    "ws": "^8.18.0",
+    "express": "^5.1.0",
+    "mysql2": "^3.11.0"
+  }
+}
